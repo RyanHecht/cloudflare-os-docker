@@ -54,8 +54,10 @@ LABEL org.opencontainers.image.title="cloudflare-os" \
       org.opencontainers.image.source="https://github.com/RyanHecht/cloudflare-os-docker" \
       org.opencontainers.image.revision="${CFOS_REF}"
 
+# procps supplies `ps`, which wrangler shells out to during startup; without it
+# the process dies with "Error: spawn ps ENOENT".
 RUN apt-get update \
- && apt-get install -y --no-install-recommends ca-certificates curl tini \
+ && apt-get install -y --no-install-recommends ca-certificates curl procps tini \
  && rm -rf /var/lib/apt/lists/*
 
 RUN corepack enable && corepack prepare pnpm@${PNPM_VERSION} --activate
