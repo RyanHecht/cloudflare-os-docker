@@ -14,36 +14,51 @@ Platform: `linux/amd64` only (see below).
 Upstream has **no published image and no production deployment path yet**. Its README lists
 "Deploy to your own server using `workerd`" as **COMING SOON**, and its worker configs reference a
 `generate-wrangler-prod.js` that does not exist in the repo. The only supported way to run the whole
-stack today is `wrangler dev`.
+stack out of the box is `wrangler dev`.
 
-So this image runs `run-dev-server.js --serve-frontend-assets` — the same thing `pnpm run-local`
-does, minus the source-hash rebuild logic. That means:
+This image does **not** run a dev server. Instead:
 
-- **You are running a dev server in production.** Upstream explicitly says this "is not the right way
-  to run the OS on a production server". It works, but expect rough edges.
-- Storage (KV, R2, Durable Objects) is provided by Miniflare, persisted as SQLite under
-  `/app/.wrangler/state`.
+- **Build time** (`build-bundles.mjs`): runs the codegen `run-dev-server.js` would do at startup,
+  then bundles every worker (router, backend, and each gatekeeper) with
+  `wrangler deploy --dry-run --outdir`.
+- **Run time** (`serve.mjs`): drives **Miniflare's programmatic API** directly with those
+  pre-bundled scripts — the same workerd runtime and the same storage emulation `wrangler dev`
+  would have used, minus the file watching and per-start rebuilds.
 
-Revisit this image once upstream ships real self-hosting.
+Startup is **~4 seconds**, versus ~60s for `wrangler dev`, because nothing is built at boot.
+
+Binding configuration is not duplicated here: `serve.mjs` calls wrangler's
+`unstable_getMiniflareWorkerOptions()` on each checked-in `wrangler.jsonc`, so KV, R2, Durable
+Object classes (including which are SQLite-backed), and the Worker Loader binding stay correct
+across upstream bumps.
+
+### Why not plain workerd?
+
+workerd alone can't run this. Its `kvNamespace` and `r2Bucket` bindings are protocol adapters —
+the capnp docs say they turn operations "into HTTP requests aimed at the named service" — so you
+must supply services implementing KV and R2 yourself. Miniflare's implementations are not portable
+into a hand-written `config.capnp`: they import `miniflare:shared` and extend
+`MiniflareDurableObject`, i.e. Miniflare's internal, unversioned runtime. Going that route means
+writing and owning a KV and R2 implementation.
+
+Revisit once upstream ships real self-hosting.
 
 ## Usage
 
 ```bash
 docker run -d --name cloudflare-os -p 8787:8787 \
-  -v cfos-state:/app/.wrangler/state \
+  -v cfos-state:/app/state \
   ghcr.io/ryanhecht/cloudflare-os:latest
 ```
 
-First start takes roughly a minute: startup regenerates gatekeeper configurator UIs and rebuilds the
-backend worker bundle before serving. Allow ~120s before failing a health check.
+Ready in about 4 seconds; a 30s health-check `start_period` is plenty.
 
 ### Persistence
 
-Mount a volume at **`/app/.wrangler/state`** — and only there.
+Mount a volume at **`/app/state`** (KV, R2 and Durable Object SQLite files).
 
-Do **not** mount over `/app/.wrangler` or `packages/workshop-backend/.wrangler`: the backend's entry
-point is `.wrangler/validate/src/server.ts`, which is build output. A volume over the parent
-directory hides it and the worker fails to start.
+State deliberately lives outside `.wrangler` so a volume can never shadow build output — the
+backend's entry point is generated under `packages/workshop-backend/.wrangler`.
 
 ### Configuration
 
@@ -59,6 +74,8 @@ the UI, so no API keys are needed in the container.
 | `AUTH_GATEKEEPERS` | Comma-separated gatekeepers allowed to drive sign-in, e.g. `github,google` |
 | `DISABLE_PASSWORD_AUTH` | `"true"` to require gatekeeper sign-in (only applies if a gatekeeper is allowlisted) |
 | `CF_AI_GATEWAY` | Route providers through a Cloudflare AI Gateway with server-managed keys |
+| `CFOS_SHARING_DOMAIN` | Namespace for Context gadget data (default `default`). Changing it later namespaces existing data away. |
+| `CFOS_PERSIST` / `CFOS_HOST` / `CFOS_PORT` | Override state path, bind address, port |
 
 ### Security
 
@@ -68,14 +85,12 @@ internet unauthenticated.** Set `CF_ACCESS_AUD` / `CF_ACCESS_ISS` and put Cloudf
 
 ## Why the image is built this way
 
-- **The `dev.ip` patch.** `wrangler dev` binds `127.0.0.1` by default, which is unreachable from
-  outside a container. The build injects `"dev": { "ip": "0.0.0.0" }` into `wrangler.jsonc`, which
-  `run-dev-server.js` copies into the generated config. The build fails loudly if upstream starts
-  setting its own `dev` block, so the patch can't silently stop applying.
-- **`run-dev-server.js` instead of `scripts/run-local.mjs`.** `run-local` hashes every source file to
-  decide whether to reinstall and rebuild. Sources are baked into the image, and startup codegen
-  perturbs that hash, so it would risk a full rebuild on every restart. Install and build happen at
-  image build time instead.
+- **Miniflare is resolved through wrangler's own `node_modules`.** wrangler pins an exact Miniflare
+  version and the two share internal APIs, so resolving Miniflare independently risks a version
+  split. `serve.mjs` resolves it from wrangler's real (pnpm-store) path.
+- **The router is the entrypoint, with an `ASSETS` binding.** That mirrors the production layout:
+  `/api` and `/gatekeeper/*` route to their workers, everything else is served from the built
+  frontend. (`run-local` instead makes the backend serve assets, which is a dev-only arrangement.)
 - **amd64 only.** Emulated arm64 builds of this monorepo are impractically slow.
 
 ## Pinning

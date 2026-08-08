@@ -83,12 +83,10 @@ jobs:
 
           docker run -d --name cfos-smoke -p 8787:8787 "$image"
 
-          # First start regenerates every gatekeeper configurator UI (several vite
-          # builds) and rebuilds the backend worker bundle before serving. That is
-          # ~2 min on a warm laptop and considerably slower on a shared runner, so
-          # allow 15 minutes before giving up.
+          # Everything is pre-bundled at image build time, so this should be ready in
+          # seconds; allow slack for a cold/slow runner.
           ok=""
-          for i in $(seq 1 180); do
+          for i in $(seq 1 60); do
             if curl -fsS http://127.0.0.1:8787/ > /dev/null 2>&1; then ok=1; break; fi
             if ! docker ps --filter name=cfos-smoke --filter status=running -q | grep -q .; then
               echo "::error::container exited during startup"
