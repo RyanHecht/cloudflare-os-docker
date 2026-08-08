@@ -76,25 +76,31 @@ jobs:
       - name: Smoke test
         run: |
           set -euo pipefail
-          if [ "${{ github.event_name }}" = "pull_request" ]; then
-            image="${{ env.REGISTRY }}/${{ steps.image.outputs.name }}:${{ steps.rev.outputs.short }}"
-          else
-            image="${{ env.REGISTRY }}/${{ steps.image.outputs.name }}:${{ steps.rev.outputs.short }}"
+          image="${{ env.REGISTRY }}/${{ steps.image.outputs.name }}:${{ steps.rev.outputs.short }}"
+          if [ "${{ github.event_name }}" != "pull_request" ]; then
             docker pull "$image"
           fi
 
           docker run -d --name cfos-smoke -p 8787:8787 "$image"
 
-          # Startup runs codegen and several vite builds before serving; allow generous time.
+          # First start regenerates every gatekeeper configurator UI (several vite
+          # builds) and rebuilds the backend worker bundle before serving. That is
+          # ~2 min on a warm laptop and considerably slower on a shared runner, so
+          # allow 15 minutes before giving up.
           ok=""
-          for _ in $(seq 1 60); do
+          for i in $(seq 1 180); do
             if curl -fsS http://127.0.0.1:8787/ > /dev/null 2>&1; then ok=1; break; fi
+            if ! docker ps --filter name=cfos-smoke --filter status=running -q | grep -q .; then
+              echo "::error::container exited during startup"
+              break
+            fi
+            if [ $((i % 12)) -eq 0 ]; then echo "still waiting... ($((i * 5))s)"; fi
             sleep 5
           done
 
           if [ -z "$ok" ]; then
             echo "::error::cloudflare-os did not become ready in time"
-            docker logs cfos-smoke | tail -50
+            docker logs cfos-smoke 2>&1 | tail -60
             exit 1
           fi
 
