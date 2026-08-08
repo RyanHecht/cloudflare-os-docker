@@ -1,0 +1,103 @@
+name: Build and publish image
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      cfos_ref:
+        description: 'cloudflare-os commit SHA to build. Defaults to the CFOS_REF baked into the Dockerfile.'
+        required: false
+        type: string
+
+env:
+  REGISTRY: ghcr.io
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Compute image name
+        id: image
+        # GHCR rejects uppercase repository names, but github.repository_owner
+        # preserves the account's original casing.
+        run: echo "name=$(echo '${{ github.repository_owner }}/cloudflare-os' | tr '[:upper:]' '[:lower:]')" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve cloudflare-os revision
+        id: rev
+        run: |
+          set -euo pipefail
+          ref="${{ inputs.cfos_ref }}"
+          if [ -z "$ref" ]; then
+            ref="$(grep -oP 'ARG CFOS_REF=\K\S+' Dockerfile | head -1)"
+          fi
+          echo "Building cloudflare-os at $ref"
+          echo "ref=$ref" >> "$GITHUB_OUTPUT"
+          echo "short=${ref:0:12}" >> "$GITHUB_OUTPUT"
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # amd64 only: this builds a large pnpm monorepo plus several vite bundles,
+      # and an emulated arm64 build takes hours. Add arm64 here only if a native
+      # arm64 runner is available.
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64
+          push: ${{ github.event_name != 'pull_request' }}
+          load: ${{ github.event_name == 'pull_request' }}
+          build-args: |
+            CFOS_REF=${{ steps.rev.outputs.ref }}
+          tags: |
+            ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}:${{ steps.rev.outputs.short }}
+            ${{ env.REGISTRY }}/${{ steps.image.outputs.name }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Smoke test
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            image="${{ env.REGISTRY }}/${{ steps.image.outputs.name }}:${{ steps.rev.outputs.short }}"
+          else
+            image="${{ env.REGISTRY }}/${{ steps.image.outputs.name }}:${{ steps.rev.outputs.short }}"
+            docker pull "$image"
+          fi
+
+          docker run -d --name cfos-smoke -p 8787:8787 "$image"
+
+          # Startup runs codegen and several vite builds before serving; allow generous time.
+          ok=""
+          for _ in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:8787/ > /dev/null 2>&1; then ok=1; break; fi
+            sleep 5
+          done
+
+          if [ -z "$ok" ]; then
+            echo "::error::cloudflare-os did not become ready in time"
+            docker logs cfos-smoke | tail -50
+            exit 1
+          fi
+
+          curl -fsS http://127.0.0.1:8787/ | grep -q "Cloudflare OS"
+          echo "Smoke test passed."
+          docker rm -f cfos-smoke
