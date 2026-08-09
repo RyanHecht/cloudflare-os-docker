@@ -58,9 +58,18 @@ function workerFor(configPath, name, bundleDir, extra = {}) {
 
 const gatekeepers = findGatekeepers();
 
-// Service bindings the router and backend use to reach each gatekeeper. Core discovers
-// gatekeepers by scanning env for the GATEKEEPER_ prefix, so this list *is* the config.
-const gatekeeperServices = Object.fromEntries(gatekeepers.map(gk => [
+// Gatekeepers are bound two different ways, and mixing them up breaks one side:
+//
+//   router  -> default export, because it forwards /gatekeeper/* HTTP requests
+//              (OAuth callbacks). The GatekeeperVendor class has no fetch().
+//   backend -> the GatekeeperVendor entrypoint, which is the capnweb RPC target.
+//
+// Core discovers gatekeepers by scanning env for the GATEKEEPER_ prefix, so these
+// lists *are* the config.
+const gatekeeperFetchServices = Object.fromEntries(
+    gatekeepers.map(gk => [bindingName(gk), gk.name]));
+
+const gatekeeperRpcServices = Object.fromEntries(gatekeepers.map(gk => [
   bindingName(gk),
   {
     name: gk.name,
@@ -90,7 +99,7 @@ const backend = workerFor(join(PACKAGES, "workshop-backend", "wrangler.jsonc"),
         ADMINS: JSON.parse(process.env.ADMINS ?? "[]"),
         ...optionalVars,
       },
-      serviceBindings: gatekeeperServices,
+      serviceBindings: gatekeeperRpcServices,
     });
 
 const FRONTEND = join(PACKAGES, "workshop-frontend", "dist");
@@ -98,17 +107,30 @@ const FRONTEND = join(PACKAGES, "workshop-frontend", "dist");
 // The router is the public entrypoint: /api and /gatekeeper/* go to their workers and
 // everything else is served from the built frontend, matching the production layout.
 const router = workerFor(join(ROOT, "wrangler.jsonc"), "dev-router", join(BUNDLES, "router"), {
-  serviceBindings: { WORKSHOP_BACKEND: "workshop-backend", ...gatekeeperServices },
+  serviceBindings: { WORKSHOP_BACKEND: "workshop-backend", ...gatekeeperFetchServices },
+  // invoke_user_worker_ahead_of_assets is essential: the router decides what is
+  // an API/gatekeeper request and explicitly falls back to env.ASSETS.fetch()
+  // for everything else. Without it Miniflare serves assets first, and the SPA
+  // not-found fallback answers /api and /gatekeeper/* with index.html -- the UI
+  // loads but every API call silently returns HTML.
   assets: { directory: FRONTEND, binding: "ASSETS",
+            routerConfig: { has_user_worker: true, invoke_user_worker_ahead_of_assets: true },
             assetConfig: { not_found_handling: "single-page-application" } },
 });
 
 const gatekeeperWorkers = gatekeepers.map(gk =>
     workerFor(join(gk.dir, "wrangler.jsonc"), gk.name, join(BUNDLES, gk.name)));
 
+// TLS terminates upstream (Cloudflare/Traefik) and the container is reached over
+// plain HTTP, so without this the worker sees http:// URLs. The backend compares
+// the browser's Origin header against its own url.origin when Access is enabled,
+// so every API call would 403 with "Cross-origin API access not allowed".
+const upstream = process.env.PUBLIC_BASE_URL || undefined;
+
 const mf = new Miniflare({
   host: HOST,
   port: PORT,
+  ...(upstream ? { upstream } : {}),
   resourcePersistencePath: PERSIST,
   workers: [router, backend, ...gatekeeperWorkers],
 });
