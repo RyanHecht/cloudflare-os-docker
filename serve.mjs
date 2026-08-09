@@ -53,7 +53,15 @@ function workerFor(configPath, name, bundleDir, extra = {}) {
   // can't point at a path that doesn't exist in the image.
   const { assets, ...rest } = workerOptions;
   const scriptPath = entryScript(bundleDir);
-  return { ...rest, ...extra, name, scriptPath, modules: true, modulesRoot: bundleDir };
+  return {
+    ...rest,
+    ...extra,
+    // Merge rather than replace: wrangler.jsonc may define vars of its own, and a
+    // top-level spread would silently drop them.
+    bindings: { ...rest.bindings, ...extra.bindings },
+    serviceBindings: { ...rest.serviceBindings, ...extra.serviceBindings },
+    name, scriptPath, modules: true, modulesRoot: bundleDir,
+  };
 }
 
 const gatekeepers = findGatekeepers();
@@ -108,6 +116,7 @@ const backend = workerFor(join(PACKAGES, "workshop-backend", "wrangler.jsonc"),
 // login form and every attempt fails with "This deployment requires Cloudflare
 // Access authentication."
 const ACCESS_MODE = Boolean(process.env.CF_ACCESS_AUD);
+const PUBLIC_BASE_URL = (process.env.PUBLIC_BASE_URL || "").replace(/\/+$/, "");
 const FRONTEND_DEFAULT = join(PACKAGES, "workshop-frontend", "dist");
 const FRONTEND_ACCESS = join(PACKAGES, "workshop-frontend", "dist-cfaccess");
 const FRONTEND = ACCESS_MODE && existsSync(FRONTEND_ACCESS)
@@ -127,8 +136,18 @@ const router = workerFor(join(ROOT, "wrangler.jsonc"), "dev-router", join(BUNDLE
             assetConfig: { not_found_handling: "single-page-application" } },
 });
 
-const gatekeeperWorkers = gatekeepers.map(gk =>
-    workerFor(join(gk.dir, "wrangler.jsonc"), gk.name, join(BUNDLES, gk.name)));
+// Each gatekeeper builds its own OAuth redirect URIs from BASE_URL, falling back
+// to http://localhost:8787/gatekeeper/<vendor> when unset -- which is right for
+// `wrangler dev` and useless anywhere else. Upstream's dev server never sets it,
+// so connecting an account on a real deployment bounces the browser to localhost.
+const gatekeeperWorkers = gatekeepers.map(gk => {
+  const vendorId = gk.name.replace(/^gatekeeper-/, "");
+  return workerFor(join(gk.dir, "wrangler.jsonc"), gk.name, join(BUNDLES, gk.name), {
+    bindings: PUBLIC_BASE_URL
+        ? { BASE_URL: `${PUBLIC_BASE_URL}/gatekeeper/${vendorId}` }
+        : {},
+  });
+});
 
 // TLS terminates upstream (Cloudflare/Traefik) and the container is reached over
 // plain HTTP, so without this the worker sees http:// URLs. The backend compares
