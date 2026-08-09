@@ -102,7 +102,16 @@ const backend = workerFor(join(PACKAGES, "workshop-backend", "wrangler.jsonc"),
       serviceBindings: gatekeeperRpcServices,
     });
 
-const FRONTEND = join(PACKAGES, "workshop-frontend", "dist");
+// The Access flag is compiled into the frontend bundle, so pick the build that
+// matches how the backend is configured. Getting this wrong is quiet and
+// confusing: with Access on but the plain bundle served, the UI shows its own
+// login form and every attempt fails with "This deployment requires Cloudflare
+// Access authentication."
+const ACCESS_MODE = Boolean(process.env.CF_ACCESS_AUD);
+const FRONTEND_DEFAULT = join(PACKAGES, "workshop-frontend", "dist");
+const FRONTEND_ACCESS = join(PACKAGES, "workshop-frontend", "dist-cfaccess");
+const FRONTEND = ACCESS_MODE && existsSync(FRONTEND_ACCESS)
+    ? FRONTEND_ACCESS : FRONTEND_DEFAULT;
 
 // The router is the public entrypoint: /api and /gatekeeper/* go to their workers and
 // everything else is served from the built frontend, matching the production layout.
@@ -138,6 +147,7 @@ const mf = new Miniflare({
 await mf.ready;
 console.log(`Cloudflare OS listening on http://${HOST}:${PORT}`);
 console.log(`Gatekeepers: ${gatekeepers.map(g => g.name).join(", ") || "(none)"}`);
+console.log(`Auth: ${ACCESS_MODE ? "Cloudflare Access" : "password"}`);
 console.log(`State: ${PERSIST}`);
 
 let shuttingDown = false;

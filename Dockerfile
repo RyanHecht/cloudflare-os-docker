@@ -30,9 +30,14 @@ RUN git init -q . \
 
 RUN pnpm install --frozen-lockfile
 
-# Frontend bundle: the router serves this as static assets.
+# Frontend bundles. VITE_CF_ACCESS_MODE is baked in at build time -- it decides
+# whether the UI calls authenticateFromCfAccess() or shows its own password
+# login -- so build both variants and let serve.mjs pick at runtime based on
+# whether Cloudflare Access is configured.
 RUN pnpm --filter @gadgets/typed-storage build \
- && pnpm --filter @gadgets/workshop-frontend exec vite build
+ && pnpm --filter @gadgets/workshop-frontend exec vite build \
+ && cd packages/workshop-frontend \
+ && VITE_CF_ACCESS_MODE=true pnpm exec vite build --outDir dist-cfaccess
 
 # Codegen + bundle every worker (router, backend, and each gatekeeper) so that no
 # building happens at container start.
