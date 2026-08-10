@@ -75,6 +75,7 @@ the UI, so no API keys are needed in the container.
 | `DISABLE_PASSWORD_AUTH` | `"true"` to require gatekeeper sign-in (only applies if a gatekeeper is allowlisted) |
 | `CF_AI_GATEWAY` | Route providers through a Cloudflare AI Gateway with server-managed keys |
 | `SERVER_MODELS` | JSON array of models offered to every user, with credentials held server-side. See the fork's [docs](https://github.com/RyanHecht/cloudflare-os/blob/server-managed-models/docs/server-managed-models.md) |
+| `SERVER_MODELS_FILE` | Path to a file holding that JSON. Preferred: the value contains commas, which some orchestrators (Portainer) mangle in environment values, and it keeps the API token out of your stack repo |
 | `CFOS_SHARING_DOMAIN` | Namespace for Context gadget data (default `default`). Changing it later namespaces existing data away. |
 | `CFOS_PERSIST` / `CFOS_HOST` / `CFOS_PORT` | Override state path, bind address, port |
 

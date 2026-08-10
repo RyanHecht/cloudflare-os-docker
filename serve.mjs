@@ -7,7 +7,7 @@
 // the same storage emulation wrangler would have used, minus the dev-server behaviour.
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
-import { realpathSync, existsSync, readdirSync, statSync } from "node:fs";
+import { realpathSync, existsSync, readdirSync, statSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 
 const ROOT = process.env.CFOS_ROOT ?? "/app";
@@ -90,6 +90,13 @@ const gatekeeperRpcServices = Object.fromEntries(gatekeepers.map(gk => [
         : {}),
   },
 ]));
+
+// SERVER_MODELS is JSON, so it is full of commas -- and Portainer splits environment
+// values on commas, which mangles it. SERVER_MODELS_FILE points at a mounted file
+// instead, which also keeps the API token out of the stack repo.
+if (process.env.SERVER_MODELS_FILE && !process.env.SERVER_MODELS) {
+  process.env.SERVER_MODELS = readFileSync(process.env.SERVER_MODELS_FILE, "utf8").trim();
+}
 
 const optionalVars = {};
 for (const name of ["PUBLIC_BASE_URL", "CF_ACCESS_AUD", "CF_ACCESS_ISS", "AUTH_GATEKEEPERS",
