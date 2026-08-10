@@ -12,8 +12,10 @@
 FROM node:24-bookworm-slim AS build
 
 # Pinned upstream revision. Bump deliberately; cloudflare-os is in heavy development.
-ARG CFOS_REPO=https://github.com/cloudflare/cloudflare-os.git
-ARG CFOS_REF=1cb5e3d9096589e38f3fcfaf3f2191aa95a4c592
+# Built from a fork carrying the SERVER_MODELS feature (deployment-supplied model
+# providers), proposed upstream. Point back at cloudflare/cloudflare-os if that lands.
+ARG CFOS_REPO=https://github.com/RyanHecht/cloudflare-os.git
+ARG CFOS_REF=7492df8450f703772c4d1166aa5678af6b29282e
 ARG PNPM_VERSION=11.17.0
 
 RUN apt-get update \

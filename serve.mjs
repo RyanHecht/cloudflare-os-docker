@@ -94,7 +94,10 @@ const gatekeeperRpcServices = Object.fromEntries(gatekeepers.map(gk => [
 const optionalVars = {};
 for (const name of ["PUBLIC_BASE_URL", "CF_ACCESS_AUD", "CF_ACCESS_ISS", "AUTH_GATEKEEPERS",
                     "DISABLE_PASSWORD_AUTH", "CF_AI_GATEWAY", "CF_AI_GATEWAY_PROVIDERS",
-                    "CF_AI_GATEWAY_ACCOUNT_ID", "CF_AI_GATEWAY_API_TOKEN"]) {
+                    "CF_AI_GATEWAY_ACCOUNT_ID", "CF_AI_GATEWAY_API_TOKEN",
+                    // Models this deployment supplies to every user; see the fork's
+                    // docs/server-managed-models.md.
+                    "SERVER_MODELS"]) {
   if (process.env[name] !== undefined && process.env[name] !== "") {
     optionalVars[name] = process.env[name];
   }

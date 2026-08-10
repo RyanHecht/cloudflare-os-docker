@@ -74,6 +74,7 @@ the UI, so no API keys are needed in the container.
 | `AUTH_GATEKEEPERS` | Comma-separated gatekeepers allowed to drive sign-in, e.g. `github,google` |
 | `DISABLE_PASSWORD_AUTH` | `"true"` to require gatekeeper sign-in (only applies if a gatekeeper is allowlisted) |
 | `CF_AI_GATEWAY` | Route providers through a Cloudflare AI Gateway with server-managed keys |
+| `SERVER_MODELS` | JSON array of models offered to every user, with credentials held server-side. See the fork's [docs](https://github.com/RyanHecht/cloudflare-os/blob/server-managed-models/docs/server-managed-models.md) |
 | `CFOS_SHARING_DOMAIN` | Namespace for Context gadget data (default `default`). Changing it later namespaces existing data away. |
 | `CFOS_PERSIST` / `CFOS_HOST` / `CFOS_PORT` | Override state path, bind address, port |
 
@@ -93,9 +94,16 @@ internet unauthenticated.** Set `CF_ACCESS_AUD` / `CF_ACCESS_ISS` and put Cloudf
   frontend. (`run-local` instead makes the backend serve assets, which is a dev-only arrangement.)
 - **amd64 only.** Emulated arm64 builds of this monorepo are impractically slow.
 
+## Fork
+
+`CFOS_REPO` points at [RyanHecht/cloudflare-os](https://github.com/RyanHecht/cloudflare-os), a
+fork carrying `SERVER_MODELS` — deployment-supplied model providers, so users don't each have to
+paste their own API key. That change is proposed upstream; if it lands, point `CFOS_REPO` back at
+`cloudflare/cloudflare-os` and drop this section.
+
 ## Pinning
 
-`CFOS_REF` in the `Dockerfile` pins the upstream commit. Bump it deliberately — Cloudflare OS is in
+`CFOS_REF` in the `Dockerfile` pins the commit. Bump it deliberately — Cloudflare OS is in
 heavy development. Tags are the 12-character upstream SHA, plus `latest`.
 
 Build a different revision without editing the file via the `workflow_dispatch` input, or locally:
