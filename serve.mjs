@@ -95,7 +95,29 @@ const gatekeeperRpcServices = Object.fromEntries(gatekeepers.map(gk => [
 // values on commas, which mangles it. SERVER_MODELS_FILE points at a mounted file
 // instead, which also keeps the API token out of the stack repo.
 if (process.env.SERVER_MODELS_FILE && !process.env.SERVER_MODELS) {
-  process.env.SERVER_MODELS = readFileSync(process.env.SERVER_MODELS_FILE, "utf8").trim();
+  // Missing file means "no shared models", which is a legitimate configuration.
+  if (existsSync(process.env.SERVER_MODELS_FILE)) {
+    process.env.SERVER_MODELS = readFileSync(process.env.SERVER_MODELS_FILE, "utf8").trim();
+  } else {
+    console.log(`No ${process.env.SERVER_MODELS_FILE}; users supply their own model keys.`);
+  }
+}
+
+// Fail at boot rather than when a user first opens the model picker: the worker only
+// parses this lazily, so a typo would otherwise surface much later and look unrelated.
+if (process.env.SERVER_MODELS) {
+  let parsed;
+  try {
+    parsed = JSON.parse(process.env.SERVER_MODELS);
+  } catch (err) {
+    console.error(`SERVER_MODELS is not valid JSON: ${err.message}`);
+    process.exit(1);
+  }
+  if (!Array.isArray(parsed)) {
+    console.error("SERVER_MODELS must be a JSON array.");
+    process.exit(1);
+  }
+  console.log(`Server models: ${parsed.map(m => m?.id ?? m?.model).join(", ") || "(none)"}`);
 }
 
 const optionalVars = {};
