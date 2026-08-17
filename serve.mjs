@@ -117,7 +117,51 @@ if (process.env.SERVER_MODELS) {
     console.error("SERVER_MODELS must be a JSON array.");
     process.exit(1);
   }
-  console.log(`Server models: ${parsed.map(m => m?.id ?? m?.model).join(", ") || "(none)"}`);
+  // Entries are either an endpoint ({provider, apiUrl, models: [...]}) or the flat
+  // one-model form. Models may also be discovered from the endpoint at runtime, so
+  // this reports what was configured, not necessarily the final list.
+  const described = parsed.map(e => {
+    if (e && Array.isArray(e.models)) {
+      const names = e.models.map(m => (typeof m === "string" ? m : m?.id ?? m?.model));
+      return `${e.apiUrl ?? e.provider} (${names.join(", ")})`;
+    }
+    if (e && Array.isArray(e.models) === false && e.model) {
+      return e.id ?? e.model;
+    }
+    return `${e?.apiUrl ?? e?.provider} (discover)`;
+  });
+  console.log(`Server models: ${described.join("; ") || "(none)"}`);
+
+  // The worker only discovers models lazily, on the first authenticated model listing, so a
+  // wrong URL or a dead token would otherwise stay invisible until someone opened the picker
+  // and saw an empty list. Probe each endpoint once at boot purely for the log line.
+  for (const e of parsed) {
+    if (!e?.apiUrl || e.discover === false) continue;
+    const base = String(e.apiUrl).replace(/\/+$/, "");
+    const root = e.provider === "ollama" && !base.endsWith("/v1") ? `${base}/v1` : base;
+    const url = `${root}/models`;
+    try {
+      const res = await fetch(url, {
+        headers: {
+          accept: "application/json",
+          ...(e.apiToken ? { authorization: `Bearer ${e.apiToken}` } : {}),
+        },
+        signal: AbortSignal.timeout(5000),
+      });
+      if (!res.ok) {
+        console.warn(`  ${url}: HTTP ${res.status} — models will fall back to defaults.`);
+        continue;
+      }
+      const body = await res.json();
+      const list = Array.isArray(body) ? body : body?.data;
+      const ids = Array.isArray(list)
+          ? list.map(m => m?.id).filter(Boolean)
+          : [];
+      console.log(`  ${url}: ${ids.length} model(s) advertised`);
+    } catch (err) {
+      console.warn(`  ${url}: unreachable (${err.message}) — models will fall back to defaults.`);
+    }
+  }
 }
 
 const optionalVars = {};
