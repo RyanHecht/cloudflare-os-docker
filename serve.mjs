@@ -8,7 +8,7 @@
 import { createRequire } from "node:module";
 import { pathToFileURL } from "node:url";
 import { realpathSync, existsSync, readdirSync, statSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 
 const ROOT = process.env.CFOS_ROOT ?? "/app";
 const BUNDLES = join(ROOT, "bundles");
@@ -99,7 +99,15 @@ if (process.env.SERVER_MODELS_FILE && !process.env.SERVER_MODELS) {
   if (existsSync(process.env.SERVER_MODELS_FILE)) {
     process.env.SERVER_MODELS = readFileSync(process.env.SERVER_MODELS_FILE, "utf8").trim();
   } else {
-    console.log(`No ${process.env.SERVER_MODELS_FILE}; users supply their own model keys.`);
+    const dir = dirname(process.env.SERVER_MODELS_FILE);
+    // Docker creates an empty directory when a bind mount's source path doesn't exist, so a
+    // mis-resolved relative mount looks identical to "no shared models configured". Say which.
+    if (existsSync(dir) && readdirSync(dir).length === 0) {
+      console.warn(`${dir} is mounted but empty: the config mount may not have resolved. ` +
+                   `Users will supply their own model keys.`);
+    } else {
+      console.log(`No ${process.env.SERVER_MODELS_FILE}; users supply their own model keys.`);
+    }
   }
 }
 
